@@ -31,6 +31,373 @@ const LAST_QUOTE_KEY = 'lastViewedQuote';
 // Storage key for filter preference
 const FILTER_KEY = 'selectedCategoryFilter';
 
+// --- Server Sync and Conflict Resolution ---
+
+// Server sync configuration
+const SERVER_SYNC_CONFIG = {
+    syncInterval: 30000, // 30 seconds
+    serverUrl: 'https://jsonplaceholder.typicode.com/posts',
+    lastSyncKey: 'lastServerSync',
+    pendingChangesKey: 'pendingChanges',
+    conflictResolutionKey: 'conflictResolution'
+};
+
+// Track pending changes and sync state
+let pendingChanges = [];
+let isSyncing = false;
+let lastServerData = null;
+
+// Server simulation data (in real app, this would come from actual server)
+const serverQuotes = [
+    { id: 1, text: "The only way to do great work is to love what you do.", category: "Motivation", timestamp: Date.now() - 3600000 },
+    { id: 2, text: "Life is what happens when you're busy making other plans.", category: "Life", timestamp: Date.now() - 1800000 },
+    { id: 3, text: "The future belongs to those who believe in the beauty of their dreams.", category: "Dreams", timestamp: Date.now() - 900000 },
+    { id: 4, text: "Success is not final, failure is not fatal: it is the courage to continue that counts.", category: "Success", timestamp: Date.now() - 450000 },
+    { id: 5, text: "In the middle of difficulty lies opportunity.", category: "Opportunity", timestamp: Date.now() - 225000 },
+    { id: 6, text: "The best way to predict the future is to invent it.", category: "Innovation", timestamp: Date.now() - 112500 },
+    { id: 7, text: "Be the change you wish to see in the world.", category: "Change", timestamp: Date.now() - 56250 },
+    { id: 8, text: "Everything you've ever wanted is on the other side of fear.", category: "Courage", timestamp: Date.now() - 28125 },
+    { id: 9, text: "The journey of a thousand miles begins with one step.", category: "Journey", timestamp: Date.now() - 14062 },
+    { id: 10, text: "What you get by achieving your goals is not as important as what you become by achieving your goals.", category: "Growth", timestamp: Date.now() - 7031 },
+    // Server-only quotes (simulating new data from server)
+    { id: 11, text: "The greatest glory in living lies not in never falling, but in rising every time we fall.", category: "Resilience", timestamp: Date.now() },
+    { id: 12, text: "The way to get started is to quit talking and begin doing.", category: "Action", timestamp: Date.now() }
+];
+
+/**
+ * Simulates fetching data from server
+ * @returns {Promise<Array>} Promise that resolves to server quotes
+ */
+async function fetchFromServer() {
+    // Simulate network delay
+    await new Promise(resolve => setTimeout(resolve, 500 + Math.random() * 1000));
+    
+    // Simulate server response with potential new data
+    const response = {
+        ok: true,
+        json: async () => {
+            // Randomly add new quotes to simulate server updates
+            const currentTime = Date.now();
+            const newQuotes = [...serverQuotes];
+            
+            // Simulate server adding new quotes occasionally
+            if (Math.random() > 0.7) {
+                const newQuote = {
+                    id: Date.now(),
+                    text: "New quote from server: " + new Date().toLocaleTimeString(),
+                    category: "Server",
+                    timestamp: currentTime
+                };
+                newQuotes.push(newQuote);
+            }
+            
+            return newQuotes;
+        }
+    };
+    
+    return response;
+}
+
+/**
+ * Simulates posting data to server
+ * @param {Array} data - Data to post
+ * @returns {Promise<Object>} Promise that resolves to server response
+ */
+async function postToServer(data) {
+    // Simulate network delay
+    await new Promise(resolve => setTimeout(resolve, 300 + Math.random() * 500));
+    
+    // Simulate server response
+    return {
+        ok: true,
+        json: async () => ({
+            success: true,
+            message: "Data synced successfully",
+            timestamp: Date.now()
+        })
+    };
+}
+
+/**
+ * Syncs local data with server
+ */
+async function syncWithServer() {
+    if (isSyncing) return;
+    
+    isSyncing = true;
+    showSyncStatus('Syncing with server...', 'info');
+    
+    try {
+        // Fetch latest data from server
+        const response = await fetchFromServer();
+        
+        if (!response.ok) {
+            throw new Error('Failed to fetch from server');
+        }
+        
+        const serverData = await response.json();
+        lastServerData = serverData;
+        
+        // Check for conflicts and merge data
+        const conflicts = detectConflicts(quotes, serverData);
+        
+        if (conflicts.length > 0) {
+            await handleConflicts(conflicts, serverData);
+        } else {
+            // No conflicts, merge server data
+            mergeServerData(serverData);
+        }
+        
+        // Send pending changes to server
+        if (pendingChanges.length > 0) {
+            await sendPendingChanges();
+        }
+        
+        // Update last sync timestamp
+        localStorage.setItem(SERVER_SYNC_CONFIG.lastSyncKey, Date.now().toString());
+        
+        showSyncStatus('Sync completed successfully!', 'success');
+        
+    } catch (error) {
+        console.error('Sync error:', error);
+        showSyncStatus('Sync failed: ' + error.message, 'error');
+    } finally {
+        isSyncing = false;
+    }
+}
+
+/**
+ * Detects conflicts between local and server data
+ * @param {Array} localData - Local quotes array
+ * @param {Array} serverData - Server quotes array
+ * @returns {Array} Array of conflicts
+ */
+function detectConflicts(localData, serverData) {
+    const conflicts = [];
+    
+    // Create maps for efficient lookup
+    const localMap = new Map(localData.map(quote => [quote.id || quote.text, quote]));
+    const serverMap = new Map(serverData.map(quote => [quote.id || quote.text, quote]));
+    
+    // Check for conflicts (same quote, different content)
+    for (const [key, localQuote] of localMap) {
+        const serverQuote = serverMap.get(key);
+        if (serverQuote && (
+            localQuote.text !== serverQuote.text ||
+            localQuote.category !== serverQuote.category
+        )) {
+            conflicts.push({
+                key,
+                local: localQuote,
+                server: serverQuote,
+                type: 'content_conflict'
+            });
+        }
+    }
+    
+    return conflicts;
+}
+
+/**
+ * Handles conflicts between local and server data
+ * @param {Array} conflicts - Array of conflicts
+ * @param {Array} serverData - Server data
+ */
+async function handleConflicts(conflicts, serverData) {
+    showSyncStatus(`Found ${conflicts.length} conflicts. Resolving...`, 'warning');
+    
+    // For this implementation, we'll use server data as source of truth
+    // In a real app, you might want to show a UI for user to choose
+    
+    conflicts.forEach(conflict => {
+        console.log(`Conflict resolved: Using server version for "${conflict.key}"`);
+    });
+    
+    // Merge server data (server takes precedence)
+    mergeServerData(serverData);
+    
+    // Show conflict resolution notification
+    showConflictResolutionNotification(conflicts);
+}
+
+/**
+ * Merges server data with local data
+ * @param {Array} serverData - Server data to merge
+ */
+function mergeServerData(serverData) {
+    const localMap = new Map(quotes.map(quote => [quote.id || quote.text, quote]));
+    const serverMap = new Map(serverData.map(quote => [quote.id || quote.text, quote]));
+    
+    // Merge server data, keeping local data for quotes not on server
+    const mergedQuotes = [];
+    
+    // Add all server quotes
+    for (const serverQuote of serverData) {
+        mergedQuotes.push(serverQuote);
+    }
+    
+    // Add local quotes that don't exist on server
+    for (const [key, localQuote] of localMap) {
+        if (!serverMap.has(key)) {
+            mergedQuotes.push(localQuote);
+        }
+    }
+    
+    // Update local quotes array
+    quotes = mergedQuotes;
+    
+    // Save to localStorage
+    saveQuotes();
+    
+    // Update UI
+    updateCategoryFilter();
+    showRandomQuote();
+}
+
+/**
+ * Sends pending changes to server
+ */
+async function sendPendingChanges() {
+    if (pendingChanges.length === 0) return;
+    
+    try {
+        const response = await postToServer(pendingChanges);
+        
+        if (response.ok) {
+            const result = await response.json();
+            console.log('Pending changes sent:', result);
+            
+            // Clear pending changes after successful sync
+            pendingChanges = [];
+            localStorage.removeItem(SERVER_SYNC_CONFIG.pendingChangesKey);
+            
+        } else {
+            throw new Error('Failed to send pending changes');
+        }
+    } catch (error) {
+        console.error('Error sending pending changes:', error);
+        // Keep pending changes for next sync attempt
+    }
+}
+
+/**
+ * Shows sync status notification
+ * @param {string} message - Status message
+ * @param {string} type - Status type (info, success, warning, error)
+ */
+function showSyncStatus(message, type = 'info') {
+    const statusDiv = document.getElementById('syncStatus') || createSyncStatusElement();
+    
+    statusDiv.textContent = message;
+    statusDiv.className = `sync-status sync-${type}`;
+    statusDiv.style.display = 'block';
+    
+    // Update sync UI
+    updateSyncUI();
+    
+    // Auto-hide after 5 seconds
+    setTimeout(() => {
+        statusDiv.style.display = 'none';
+    }, 5000);
+}
+
+/**
+ * Creates sync status element
+ * @returns {HTMLElement} Sync status element
+ */
+function createSyncStatusElement() {
+    const statusDiv = document.createElement('div');
+    statusDiv.id = 'syncStatus';
+    statusDiv.style.cssText = `
+        position: fixed;
+        top: 60px;
+        right: 20px;
+        padding: 10px 15px;
+        border-radius: 5px;
+        color: white;
+        font-size: 0.9em;
+        z-index: 1001;
+        display: none;
+        max-width: 300px;
+        word-wrap: break-word;
+    `;
+    
+    document.body.appendChild(statusDiv);
+    return statusDiv;
+}
+
+/**
+ * Shows conflict resolution notification
+ * @param {Array} conflicts - Array of conflicts
+ */
+function showConflictResolutionNotification(conflicts) {
+    const notification = document.createElement('div');
+    notification.className = 'conflict-notification';
+    notification.innerHTML = `
+        <h4>Data Conflicts Resolved</h4>
+        <p>${conflicts.length} conflicts were found and resolved using server data.</p>
+        <button onclick="this.parentElement.remove()">Dismiss</button>
+    `;
+    
+    notification.style.cssText = `
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        background: white;
+        padding: 20px;
+        border-radius: 10px;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+        z-index: 1002;
+        max-width: 400px;
+        text-align: center;
+    `;
+    
+    document.body.appendChild(notification);
+    
+    // Auto-remove after 10 seconds
+    setTimeout(() => {
+        if (notification.parentElement) {
+            notification.remove();
+        }
+    }, 10000);
+}
+
+/**
+ * Adds a change to pending changes queue
+ * @param {string} action - Action type (add, update, delete)
+ * @param {Object} data - Change data
+ */
+function addPendingChange(action, data) {
+    const change = {
+        action,
+        data,
+        timestamp: Date.now(),
+        id: Date.now() + Math.random()
+    };
+    
+    pendingChanges.push(change);
+    localStorage.setItem(SERVER_SYNC_CONFIG.pendingChangesKey, JSON.stringify(pendingChanges));
+}
+
+/**
+ * Starts periodic server sync
+ */
+function startPeriodicSync() {
+    setInterval(() => {
+        syncWithServer();
+    }, SERVER_SYNC_CONFIG.syncInterval);
+}
+
+/**
+ * Manual sync trigger
+ */
+function manualSync() {
+    if (isSyncing) return;
+    
+    syncWithServer();
+}
+
 /**
  * Populates the category dropdown with unique categories from quotes array
  * This function dynamically updates the dropdown when categories change
@@ -172,9 +539,84 @@ document.addEventListener('DOMContentLoaded', function() {
     const importInput = document.getElementById('importFile');
     if (importInput) importInput.addEventListener('change', importFromJsonFile);
     
+    // Wire up manual sync button
+    const manualSyncBtn = document.getElementById('manualSync');
+    if (manualSyncBtn) manualSyncBtn.addEventListener('click', manualSync);
+    
     // Show initial quote count
     showQuoteCount();
+    
+    // Initialize server sync
+    initializeServerSync();
+    
+    // Start periodic sync
+    startPeriodicSync();
+    
+    // Update sync UI
+    updateSyncUI();
 });
+
+/**
+ * Initializes server sync functionality
+ */
+function initializeServerSync() {
+    // Load pending changes from localStorage
+    const storedPendingChanges = localStorage.getItem(SERVER_SYNC_CONFIG.pendingChangesKey);
+    if (storedPendingChanges) {
+        try {
+            pendingChanges = JSON.parse(storedPendingChanges);
+        } catch (e) {
+            pendingChanges = [];
+        }
+    }
+    
+    // Perform initial sync
+    setTimeout(() => {
+        syncWithServer();
+    }, 2000); // Wait 2 seconds before first sync
+}
+
+/**
+ * Updates the sync UI elements
+ */
+function updateSyncUI() {
+    // Update last sync info
+    const lastSyncInfo = document.getElementById('lastSyncInfo');
+    if (lastSyncInfo) {
+        const lastSync = localStorage.getItem(SERVER_SYNC_CONFIG.lastSyncKey);
+        if (lastSync) {
+            const lastSyncDate = new Date(parseInt(lastSync));
+            lastSyncInfo.textContent = `Last sync: ${lastSyncDate.toLocaleTimeString()}`;
+        } else {
+            lastSyncInfo.textContent = 'Last sync: Never';
+        }
+    }
+    
+    // Update pending changes info
+    const pendingChangesInfo = document.getElementById('pendingChangesInfo');
+    if (pendingChangesInfo) {
+        if (pendingChanges.length > 0) {
+            pendingChangesInfo.textContent = `Pending changes: ${pendingChanges.length}`;
+            pendingChangesInfo.style.display = 'block';
+        } else {
+            pendingChangesInfo.style.display = 'none';
+        }
+    }
+    
+    // Update sync button state
+    const manualSyncBtn = document.getElementById('manualSync');
+    if (manualSyncBtn) {
+        if (isSyncing) {
+            manualSyncBtn.textContent = 'Syncing...';
+            manualSyncBtn.classList.add('syncing');
+            manualSyncBtn.disabled = true;
+        } else {
+            manualSyncBtn.textContent = 'Sync Now';
+            manualSyncBtn.classList.remove('syncing');
+            manualSyncBtn.disabled = false;
+        }
+    }
+}
 
 /**
  * Displays a random quote from the quotes array
@@ -263,6 +705,9 @@ function addQuote() {
     
     const newQuote = { text: quoteText, category: quoteCategory };
     quotes.push(newQuote);
+    
+    // Add to pending changes for server sync
+    addPendingChange('add', newQuote);
     
     // Save to localStorage
     saveQuotes();
@@ -369,7 +814,15 @@ function createAddQuoteForm() {
  */
 function removeQuote(index) {
     if (index >= 0 && index < quotes.length) {
+        const removedQuote = quotes[index];
         quotes.splice(index, 1);
+        
+        // Add to pending changes for server sync
+        addPendingChange('delete', removedQuote);
+        
+        // Save to localStorage
+        saveQuotes();
+        
         updateCategoryFilter();
         showRandomQuote();
         showSuccessMessage('Quote removed successfully!');
@@ -384,8 +837,19 @@ function removeQuote(index) {
  */
 function editQuote(index, newText, newCategory) {
     if (index >= 0 && index < quotes.length) {
+        const oldQuote = { ...quotes[index] };
         quotes[index].text = newText;
         quotes[index].category = newCategory;
+        
+        // Add to pending changes for server sync
+        addPendingChange('update', {
+            old: oldQuote,
+            new: quotes[index]
+        });
+        
+        // Save to localStorage
+        saveQuotes();
+        
         updateCategoryFilter();
         showRandomQuote();
         showSuccessMessage('Quote updated successfully!');
@@ -464,7 +928,8 @@ function importFromJsonFile(event) {
     fileReader.readAsText(file);
 }
 
-// Make filterQuotes globally accessible for HTML inline handler
+// Make functions globally accessible
+window.manualSync = manualSync;
 window.filterQuotes = filterQuotes;
 
 /**

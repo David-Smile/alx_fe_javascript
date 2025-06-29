@@ -89,10 +89,86 @@
             border: 1px solid #ddd;
             font-size: 1em;
         }
+        
+        /* Server Sync Styles */
+        .sync-container {
+            background: white;
+            padding: 15px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        
+        .sync-status {
+            display: none;
+            position: fixed;
+            top: 60px;
+            right: 20px;
+            padding: 10px 15px;
+            border-radius: 5px;
+            color: white;
+            font-size: 0.9em;
+            z-index: 1001;
+            max-width: 300px;
+            word-wrap: break-word;
+        }
+        
+        .sync-info {
+            background-color: #17a2b8;
+        }
+        
+        .sync-success {
+            background-color: #28a745;
+        }
+        
+        .sync-warning {
+            background-color: #ffc107;
+            color: #333;
+        }
+        
+        .sync-error {
+            background-color: #dc3545;
+        }
+        
+        .sync-button {
+            background-color: #6c757d;
+        }
+        
+        .sync-button:hover {
+            background-color: #545b62;
+        }
+        
+        .sync-button.syncing {
+            background-color: #ffc107;
+            color: #333;
+            cursor: not-allowed;
+        }
+        
+        .last-sync {
+            font-size: 0.8em;
+            color: #666;
+            margin-top: 10px;
+        }
+        
+        .pending-changes {
+            font-size: 0.8em;
+            color: #dc3545;
+            margin-top: 5px;
+        }
     </style>
 </head>
 <body>
     <h1>Dynamic Quote Generator</h1>
+    
+    <!-- Server Sync Container -->
+    <div class="sync-container">
+        <h3>🔄 Server Synchronization</h3>
+        <p>Your quotes are automatically synced with the server every 30 seconds.</p>
+        <button id="manualSync" class="sync-button" onclick="manualSync()">Sync Now</button>
+        <div id="lastSyncInfo" class="last-sync">Last sync: Never</div>
+        <div id="pendingChangesInfo" class="pending-changes" style="display: none;">Pending changes: 0</div>
+    </div>
     
     <div class="category-selector">
         <label for="categoryFilter">Filter by Category: </label>
