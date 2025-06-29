@@ -995,3 +995,77 @@ async function fetchQuotesFromServer() {
         throw error;
     }
 }
+
+/**
+ * Synchronizes quotes between local storage and server
+ * @returns {Promise<boolean>} Promise that resolves to true if sync was successful
+ */
+async function syncQuotes() {
+    try {
+        showSyncStatus('Starting quote synchronization...', 'info');
+        
+        // Load current quotes from localStorage
+        const localQuotes = JSON.parse(localStorage.getItem(QUOTES_KEY) || '[]');
+        
+        // Fetch quotes from server
+        const serverQuotes = await fetchQuotesFromServer();
+        
+        // Merge local and server quotes
+        const mergedQuotes = mergeQuotesData(localQuotes, serverQuotes);
+        
+        // Update local storage with merged data
+        localStorage.setItem(QUOTES_KEY, JSON.stringify(mergedQuotes));
+        
+        // Update the global quotes array
+        quotes = mergedQuotes;
+        
+        // Update UI
+        updateCategoryFilter();
+        showRandomQuote();
+        
+        // Send any pending changes to server
+        if (pendingChanges.length > 0) {
+            await sendPendingChanges();
+        }
+        
+        showSyncStatus('Quote synchronization completed successfully!', 'success');
+        return true;
+        
+    } catch (error) {
+        console.error('Quote synchronization failed:', error);
+        showSyncStatus('Quote synchronization failed: ' + error.message, 'error');
+        return false;
+    }
+}
+
+/**
+ * Merges local and server quote data, handling conflicts
+ * @param {Array} localQuotes - Local quotes array
+ * @param {Array} serverQuotes - Server quotes array
+ * @returns {Array} Merged quotes array
+ */
+function mergeQuotesData(localQuotes, serverQuotes) {
+    const mergedQuotes = [];
+    const localMap = new Map(localQuotes.map(quote => [quote.id || quote.text, quote]));
+    const serverMap = new Map(serverQuotes.map(quote => [quote.id || quote.text, quote]));
+    
+    // Add all server quotes (server takes precedence)
+    for (const serverQuote of serverQuotes) {
+        mergedQuotes.push(serverQuote);
+    }
+    
+    // Add local quotes that don't exist on server
+    for (const [key, localQuote] of localMap) {
+        if (!serverMap.has(key)) {
+            mergedQuotes.push(localQuote);
+        }
+    }
+    
+    // Log merge results
+    console.log(`Merged quotes: ${localQuotes.length} local + ${serverQuotes.length} server = ${mergedQuotes.length} total`);
+    
+    return mergedQuotes;
+}
+
+// Make syncQuotes globally accessible
+window.syncQuotes = syncQuotes;
