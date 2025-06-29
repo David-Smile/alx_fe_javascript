@@ -940,3 +940,27 @@ function updateCategoryFilter() {
     populateCategories();
     showQuoteCount();
 }
+
+/**
+ * Fetches quotes from the server
+ * @returns {Promise<Array>} Promise that resolves to server quotes
+ */
+async function fetchQuotesFromServer() {
+    try {
+        // Use the existing fetchFromServer function
+        const response = await fetchFromServer();
+        
+        if (!response.ok) {
+            throw new Error('Failed to fetch quotes from server');
+        }
+        
+        const serverQuotes = await response.json();
+        console.log('Fetched quotes from server:', serverQuotes);
+        
+        return serverQuotes;
+    } catch (error) {
+        console.error('Error fetching quotes from server:', error);
+        showSyncStatus('Failed to fetch quotes from server: ' + error.message, 'error');
+        throw error;
+    }
+}
