@@ -187,7 +187,7 @@ async function syncWithServer() {
         // Update last sync timestamp
         localStorage.setItem(SERVER_SYNC_CONFIG.lastSyncKey, Date.now().toString());
         
-        showSyncStatus('Sync completed successfully!', 'success');
+        showSyncStatus('Quotes synced with server!', 'success');
         
     } catch (error) {
         console.error('Sync error:', error);
@@ -1028,7 +1028,7 @@ async function syncQuotes() {
             await sendPendingChanges();
         }
         
-        showSyncStatus('Quote synchronization completed successfully!', 'success');
+        showSyncStatus('Quotes synced with server!', 'success');
         return true;
         
     } catch (error) {
