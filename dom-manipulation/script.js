@@ -22,6 +22,10 @@ const categoryFilter = document.getElementById('categoryFilter');
 // Current filter
 let currentFilter = 'all';
 
+// Local Storage Keys
+const QUOTES_KEY = 'dynamicQuotes';
+const LAST_QUOTE_KEY = 'lastViewedQuote';
+
 // Initialize the application
 document.addEventListener('DOMContentLoaded', function() {
     // Set up event listeners
@@ -32,8 +36,22 @@ document.addEventListener('DOMContentLoaded', function() {
     // Initialize category filter
     updateCategoryFilter();
     
-    // Show initial quote
-    showRandomQuote();
+    // Load quotes from localStorage
+    loadQuotes();
+    updateCategoryFilter();
+    
+    // Show last viewed quote if available, else show random
+    if (!loadLastViewedQuote()) {
+        showRandomQuote();
+    }
+    
+    // Wire up export button
+    const exportBtn = document.getElementById('exportQuotes');
+    if (exportBtn) exportBtn.addEventListener('click', exportQuotesToJson);
+    
+    // Wire up import input
+    const importInput = document.getElementById('importFile');
+    if (importInput) importInput.addEventListener('change', importFromJsonFile);
 });
 
 /**
@@ -49,6 +67,7 @@ function showRandomQuote() {
     
     if (filteredQuotes.length === 0) {
         displayQuote("No quotes available for this category.", "Empty");
+        saveLastViewedQuote({ text: "No quotes available for this category.", category: "Empty" });
         return;
     }
     
@@ -57,6 +76,7 @@ function showRandomQuote() {
     const selectedQuote = filteredQuotes[randomIndex];
     
     displayQuote(selectedQuote.text, selectedQuote.category);
+    saveLastViewedQuote(selectedQuote);
 }
 
 /**
@@ -146,6 +166,10 @@ function addQuote() {
     
     // Show the newly added quote
     displayQuote(newQuote.text, newQuote.category);
+    
+    // Save to localStorage
+    saveQuotes();
+    saveLastViewedQuote(newQuote);
 }
 
 /**
@@ -280,4 +304,132 @@ function editQuote(index, newText, newCategory) {
         showRandomQuote();
         showSuccessMessage('Quote updated successfully!');
     }
-} 
+}
+
+// --- Web Storage and JSON Handling Enhancements ---
+
+function loadQuotes() {
+    const stored = localStorage.getItem(QUOTES_KEY);
+    if (stored) {
+        try {
+            const parsed = JSON.parse(stored);
+            if (Array.isArray(parsed)) {
+                quotes = parsed;
+            }
+        } catch (e) {}
+    }
+}
+
+function saveQuotes() {
+    localStorage.setItem(QUOTES_KEY, JSON.stringify(quotes));
+}
+
+function saveLastViewedQuote(quoteObj) {
+    sessionStorage.setItem(LAST_QUOTE_KEY, JSON.stringify(quoteObj));
+}
+
+function loadLastViewedQuote() {
+    const stored = sessionStorage.getItem(LAST_QUOTE_KEY);
+    if (stored) {
+        try {
+            const parsed = JSON.parse(stored);
+            if (parsed && parsed.text && parsed.category) {
+                displayQuote(parsed.text, parsed.category);
+                return true;
+            }
+        } catch (e) {}
+    }
+    return false;
+}
+
+function exportQuotesToJson() {
+    const dataStr = JSON.stringify(quotes, null, 2);
+    const blob = new Blob([dataStr], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'quotes.json';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
+function importFromJsonFile(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    const fileReader = new FileReader();
+    fileReader.onload = function(e) {
+        try {
+            const importedQuotes = JSON.parse(e.target.result);
+            if (Array.isArray(importedQuotes)) {
+                quotes.push(...importedQuotes.filter(q => q.text && q.category));
+                saveQuotes();
+                updateCategoryFilter();
+                showSuccessMessage('Quotes imported successfully!');
+                showRandomQuote();
+            } else {
+                alert('Invalid JSON format.');
+            }
+        } catch (err) {
+            alert('Failed to import quotes: ' + err.message);
+        }
+    };
+    fileReader.readAsText(file);
+}
+
+// Patch DOMContentLoaded for storage and controls
+const origDOMContentLoaded = document.onreadystatechange;
+document.addEventListener('DOMContentLoaded', function() {
+    loadQuotes();
+    updateCategoryFilter();
+    if (!loadLastViewedQuote()) {
+        showRandomQuote();
+    }
+    const exportBtn = document.getElementById('exportQuotes');
+    if (exportBtn) exportBtn.addEventListener('click', exportQuotesToJson);
+    const importInput = document.getElementById('importFile');
+    if (importInput) importInput.addEventListener('change', importFromJsonFile);
+});
+
+// Patch addQuote to save to localStorage and sessionStorage
+const origAddQuote = addQuote;
+addQuote = function() {
+    const quoteText = document.getElementById('newQuoteText').value.trim();
+    const quoteCategory = document.getElementById('newQuoteCategory').value.trim();
+    if (!quoteText || !quoteCategory) {
+        alert('Please enter both quote text and category!');
+        return;
+    }
+    const newQuote = { text: quoteText, category: quoteCategory };
+    quotes.push(newQuote);
+    saveQuotes();
+    updateCategoryFilter();
+    document.getElementById('newQuoteText').value = '';
+    document.getElementById('newQuoteCategory').value = '';
+    toggleAddQuoteForm();
+    showSuccessMessage('Quote added successfully!');
+    displayQuote(newQuote.text, newQuote.category);
+    saveLastViewedQuote(newQuote);
+};
+
+// Patch showRandomQuote to save last viewed quote
+const origShowRandomQuote = showRandomQuote;
+showRandomQuote = function() {
+    let filteredQuotes = quotes;
+    if (currentFilter !== 'all') {
+        filteredQuotes = quotes.filter(quote => quote.category === currentFilter);
+    }
+    if (filteredQuotes.length === 0) {
+        displayQuote("No quotes available for this category.", "Empty");
+        saveLastViewedQuote({ text: "No quotes available for this category.", category: "Empty" });
+        return;
+    }
+    const randomIndex = Math.floor(Math.random() * filteredQuotes.length);
+    const selectedQuote = filteredQuotes[randomIndex];
+    displayQuote(selectedQuote.text, selectedQuote.category);
+    saveLastViewedQuote(selectedQuote);
+};
+
+// Make importFromJsonFile globally accessible for HTML inline handler
+window.importFromJsonFile = importFromJsonFile;
